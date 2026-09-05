@@ -2,11 +2,9 @@ name: Probe A
 on:
   workflow_call:
     inputs:
-      knoten: { type: string, default: "22" }
-    secrets:
-      MELDEN_URL: { required: false }
-permissions:
-  contents: write
+      knoten:
+        type: string
+        default: "22"
 jobs:
   bauen:
     runs-on: ubuntu-latest
