@@ -33,7 +33,7 @@ jobs:
   bauen:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # ── Die Seite beschreibt sich selbst ────────────────────────────────
       - name: auslieferung.toml lesen
@@ -62,7 +62,7 @@ jobs:
           PY
 
       # ── Bauen, sofern es etwas zu bauen gibt ────────────────────────────
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         if: steps.beschreibung.outputs.bauen != ''
         with:
           node-version: ${{ inputs.knoten }}
