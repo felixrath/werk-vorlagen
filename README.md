@@ -12,14 +12,33 @@ Workflows aus öffentlichen Repositorien ohne Sonderregeln funktionieren.
 
 ```toml
 name     = "koenig"      # Kurzname, taucht im Paketnamen auf
-art      = "sftp"        # rsync | sftp | ftp | dienst
-host     = "wp123.webhosting.example"
-pfad     = "/html"
 bauen    = ""            # leer = keine Bauschritte, Quelle ist das Repo
 ergebnis = "."           # bei Astro: "dist"
-rohlogs  = ""            # Pfad, wenn der Anbieter Rohlogs herausgibt
-beacon   = "cname"       # cname | fremd | keins
+
+# Wo der Kunde abnimmt. Immer die Werkstatt, immer vorhanden.
+[vorschau]
+art  = "rsync"
+host = "mittwoch"
+pfad = "/var/www/vorschau/koenig"
+
+# Wo die Seite oeffentlich steht. Solange aktiv = false, ruehrt der
+# ausroller das Ziel nicht an — die Felder duerfen dann leer bleiben.
+[ziel]
+aktiv = false
+art   = "rsync"          # rsync | sftp | ftp | dienst
+host  = ""
+pfad  = ""
+
+[messung]
+beacon  = "keins"        # cname | fremd | keins
+rohlogs = ""             # Pfad, wenn der Anbieter Rohlogs herausgibt
 ```
+
+**Warum Vorschau und Ziel getrennt sind.** Eine Seite ist oft fertig, lange
+bevor die Domain umziehen darf — der Kunde ist noch bei einem anderen
+Anbieter, oder die Abnahme steht aus. Die Vorschau macht die fertige Seite
+trotzdem zeigbar, und das Live-Schalten bleibt ein eigener, bewusster Schritt
+statt eines Nebeneffekts vom nächsten Commit.
 
 `host`, `pfad` und `rohlogs` liest nur der `ausroller` auf der Werkstatt.
 Die **Zugangsdaten stehen nicht hier** — sie liegen in

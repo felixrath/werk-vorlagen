@@ -40,23 +40,38 @@ jobs:
         id: beschreibung
         run: |
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import os, sys, tomllib, pathlib
+          import sys, tomllib, pathlib
 
           pfad = pathlib.Path("auslieferung.toml")
           if not pfad.exists():
               sys.exit("auslieferung.toml fehlt — siehe werk-vorlagen/README.md")
           k = tomllib.loads(pfad.read_text())
 
-          fehlend = [f for f in ("name", "art") if f not in k]
-          if fehlend:
-              sys.exit(f"auslieferung.toml: {', '.join(fehlend)} fehlt")
+          if "name" not in k:
+              sys.exit("auslieferung.toml: name fehlt")
 
+          # Eine Seite hat immer eine Vorschau und hoechstens ein Ziel. Die
+          # Vorschau ist der Ort, an dem der Kunde abnimmt; das Ziel ist da,
+          # wo die Seite spaeter oeffentlich steht. Beim Bau spielt beides
+          # keine Rolle — die Pruefung steht hier, damit ein Fehler beim
+          # Bau auffaellt und nicht erst, wenn der ausroller danebengreift.
           erlaubt = {"rsync", "sftp", "ftp", "dienst"}
-          if k["art"] not in erlaubt:
-              sys.exit(f"art={k['art']!r} unbekannt, erlaubt: {sorted(erlaubt)}")
+          for wo in ("vorschau", "ziel"):
+              block = k.get(wo)
+              if block is None:
+                  if wo == "vorschau":
+                      sys.exit("auslieferung.toml: [vorschau] fehlt")
+                  continue
+              if wo == "ziel" and not block.get("aktiv", False):
+                  continue          # noch nicht scharf, Felder duerfen leer sein
+              if block.get("art") not in erlaubt:
+                  sys.exit(f"[{wo}] art={block.get('art')!r} unbekannt, "
+                           f"erlaubt: {sorted(erlaubt)}")
+              for feld in ("host", "pfad"):
+                  if not block.get(feld):
+                      sys.exit(f"[{wo}] {feld} fehlt")
 
           print(f"name={k['name']}")
-          print(f"art={k['art']}")
           print(f"bauen={k.get('bauen', '')}")
           print(f"ergebnis={k.get('ergebnis', '.')}")
           PY
