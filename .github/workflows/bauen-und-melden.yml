@@ -18,6 +18,13 @@ on:
         description: Node-Fassung, falls gebaut wird
         type: string
         default: "22"
+      nur_bei_aenderung:
+        description: >
+          Fuer das naechtliche Nachbacken: nur bauen, wenn sich der Aushang
+          heute anders zeigt als gestern. An den meisten Tagen ist das bei
+          keiner Seite der Fall, und dann endet der Lauf nach zehn Sekunden.
+        type: boolean
+        default: false
     secrets:
       MELDEN_URL:
         description: Adresse des ausrollers auf der Werkstatt
@@ -84,22 +91,58 @@ jobs:
           print("zusatz=" + " ".join(f"--exclude={x}" for x in zusatz))
           PY
 
+      # ── Nachbacken: aendert sich heute ueberhaupt etwas? ─────────────────
+      # Die Frage beantwortet die aushang-Bibliothek selbst — dieselbe
+      # Logik, die auch die Seite rechnet. Sie in einem Cron-Skript
+      # nachzubauen hiesse, Zeitlogik zweimal zu haben, und die zweite
+      # Fassung waere die, die still falsch wird.
+      - name: Aushang-Wechsel pruefen
+        id: wechsel
+        if: inputs.nur_bei_aenderung
+        run: |
+          if [ ! -f aushang.toml ]; then
+            echo "kein Aushang — nichts nachzubacken"
+            echo "noetig=nein" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          npm ci --silent
+          npx tsx -e '
+            import { readFileSync } from "node:fs";
+            import { parse } from "smol-toml";
+            import { AushangSchema } from "aushang";
+            import { wechseltAm, ortsZeit } from "aushang";
+            const a = AushangSchema.parse(parse(readFileSync("aushang.toml", "utf8")));
+            const heute = ortsZeit(new Date(), a.zeitzone).datum;
+            console.log(wechseltAm(a, heute) ? "ja" : "nein");
+          ' > /tmp/wechsel.txt
+          echo "noetig=$(cat /tmp/wechsel.txt)" >> "$GITHUB_OUTPUT"
+          echo "Wechsel heute: $(cat /tmp/wechsel.txt)"
+
+      - name: Nichts zu tun
+        if: inputs.nur_bei_aenderung && steps.wechsel.outputs.noetig != 'ja'
+        run: echo "Der Aushang zeigt heute dasselbe wie gestern — kein Neubau."
+
       # ── Bauen, sofern es etwas zu bauen gibt ────────────────────────────
       - uses: actions/setup-node@v5
-        if: steps.beschreibung.outputs.bauen != ''
+        if: >-
+          steps.beschreibung.outputs.bauen != ''
+          && (!inputs.nur_bei_aenderung || steps.wechsel.outputs.noetig == 'ja')
         with:
           node-version: ${{ inputs.knoten }}
           cache: npm
 
       - name: Abhängigkeiten
-        if: steps.beschreibung.outputs.bauen != ''
+        if: >-
+          steps.beschreibung.outputs.bauen != ''
+          && (!inputs.nur_bei_aenderung || steps.wechsel.outputs.noetig == 'ja')
         run: npm ci
 
       # Läuft vor dem Bau: bricht bei fehlerhafter Zeitlogik ab, bevor
       # irgendetwas ausgeliefert wird. Fehlt ein test-Skript, wird
       # übersprungen statt zu scheitern.
       - name: Prüfungen
-        if: steps.beschreibung.outputs.bauen != ''
+        if: >-
+          steps.beschreibung.outputs.bauen != ''
+          && (!inputs.nur_bei_aenderung || steps.wechsel.outputs.noetig == 'ja')
         run: |
           if node -e "process.exit(require('./package.json').scripts?.test?0:1)"; then
             npm test
@@ -111,7 +154,9 @@ jobs:
           fi
 
       - name: Bauen
-        if: steps.beschreibung.outputs.bauen != ''
+        if: >-
+          steps.beschreibung.outputs.bauen != ''
+          && (!inputs.nur_bei_aenderung || steps.wechsel.outputs.noetig == 'ja')
         run: ${{ steps.beschreibung.outputs.bauen }}
 
       # ── Fassung stempeln ────────────────────────────────────────────────
@@ -121,6 +166,7 @@ jobs:
       # Kundenseite von der zuletzt ausgelieferten ab, hat jemand von Hand
       # etwas geändert.
       - name: Fassung ins HTML stempeln
+        if: ${{ !inputs.nur_bei_aenderung || steps.wechsel.outputs.noetig == 'ja' }}
         run: |
           python3 - <<'PY'
           import os, pathlib, re
@@ -146,6 +192,7 @@ jobs:
 
       # ── Einpacken ───────────────────────────────────────────────────────
       - name: Paket schnüren
+        if: ${{ !inputs.nur_bei_aenderung || steps.wechsel.outputs.noetig == 'ja' }}
         id: paket
         run: |
           ergebnis="${{ steps.beschreibung.outputs.ergebnis }}"
@@ -179,6 +226,7 @@ jobs:
       # Release statt Artefakt: Artefakte verfallen nach 90 Tagen, und ein
       # Rückzug auf eine ältere Fassung griffe dann ins Leere.
       - name: Release anlegen
+        if: ${{ !inputs.nur_bei_aenderung || steps.wechsel.outputs.noetig == 'ja' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
