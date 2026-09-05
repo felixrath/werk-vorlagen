@@ -1,6 +1,6 @@
 name: Selbsttest
 on: { workflow_dispatch: }
 jobs:
-  probe:
-    uses: ./.github/workflows/bauen-und-melden.yml
+  a:
+    uses: ./.github/workflows/probe-a.yml
     secrets: inherit
