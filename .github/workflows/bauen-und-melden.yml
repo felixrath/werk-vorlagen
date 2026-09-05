@@ -100,20 +100,28 @@ jobs:
         id: wechsel
         if: inputs.nur_bei_aenderung
         run: |
-          if [ ! -f aushang.toml ]; then
+          # Die Bibliothek ist eingebaut, nicht eingebunden — sie liegt
+          # unter src/aushang/ im Repo selbst. Der Grund steht in
+          # felixrath/aushang: ein privates Repo als npm-Abhaengigkeit
+          # braeuchte hier ein Geheimnis je Seitenrepo.
+          if [ ! -f aushang.toml ] || [ ! -d src/aushang ]; then
             echo "kein Aushang — nichts nachzubacken"
             echo "noetig=nein" >> "$GITHUB_OUTPUT"; exit 0
           fi
           npm ci --silent
-          npx tsx -e '
-            import { readFileSync } from "node:fs";
-            import { parse } from "smol-toml";
-            import { AushangSchema } from "aushang";
-            import { wechseltAm, ortsZeit } from "aushang";
-            const a = AushangSchema.parse(parse(readFileSync("aushang.toml", "utf8")));
-            const heute = ortsZeit(new Date(), a.zeitzone).datum;
-            console.log(wechseltAm(a, heute) ? "ja" : "nein");
-          ' > /tmp/wechsel.txt
+          cat > /tmp/wechsel.ts <<'TS'
+          import { readFileSync } from 'node:fs';
+          import { parse } from 'smol-toml';
+          import { AushangSchema } from './src/aushang/src/schema.ts';
+          import { wechseltAm, ortsZeit } from './src/aushang/src/aushang.ts';
+
+          const a = AushangSchema.parse(parse(readFileSync('aushang.toml', 'utf8')));
+          console.log(wechseltAm(a, ortsZeit(new Date(), a.zeitzone).datum) ? 'ja' : 'nein');
+          TS
+          sed -i 's/^          //' /tmp/wechsel.ts
+          cp /tmp/wechsel.ts ./wechsel.probe.ts
+          npx tsx ./wechsel.probe.ts > /tmp/wechsel.txt
+          rm -f ./wechsel.probe.ts
           echo "noetig=$(cat /tmp/wechsel.txt)" >> "$GITHUB_OUTPUT"
           echo "Wechsel heute: $(cat /tmp/wechsel.txt)"
 
