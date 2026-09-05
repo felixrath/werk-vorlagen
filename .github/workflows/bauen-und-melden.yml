@@ -71,9 +71,17 @@ jobs:
                   if not block.get(feld):
                       sys.exit(f"[{wo}] {feld} fehlt")
 
+          # Seiten ohne Bau liefern aus dem Repo aus. Was dort liegt, aber
+          # nicht auf den Webserver gehoert, steht hier — etwa eine
+          # nginx.conf, die im Webwurzelverzeichnis oeffentlich einsehbar waere.
+          zusatz = k.get("nicht_ausliefern", [])
+          if not isinstance(zusatz, list) or any(not isinstance(x, str) for x in zusatz):
+              sys.exit("nicht_ausliefern muss eine Liste von Zeichenketten sein")
+
           print(f"name={k['name']}")
           print(f"bauen={k.get('bauen', '')}")
           print(f"ergebnis={k.get('ergebnis', '.')}")
+          print("zusatz=" + " ".join(f"--exclude={x}" for x in zusatz))
           PY
 
       # ── Bauen, sofern es etwas zu bauen gibt ────────────────────────────
@@ -159,6 +167,7 @@ jobs:
               --exclude=.DS_Store --exclude=node_modules --exclude=.astro \
               --exclude=auslieferung.toml --exclude=CLAUDE.md \
               --exclude='*.tar.gz' \
+              ${{ steps.beschreibung.outputs.zusatz }} \
               .
 
           echo "datei=$datei" >> "$GITHUB_OUTPUT"
@@ -174,12 +183,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           marke="f-${GITHUB_SHA::7}"
-          gh release create "$marke" "${{ steps.paket.outputs.datei }}" \
+          # auslieferung.toml haengt als eigenes Anhaengsel am Release und
+          # liegt bewusst nicht im Paket: der ausroller braucht sie, das
+          # Webwurzelverzeichnis nicht.
+          gh release create "$marke" \
+            "${{ steps.paket.outputs.datei }}" auslieferung.toml \
             --title "$marke" \
             --notes "Fassung ${GITHUB_SHA::7} von $(git log -1 --format=%cI)
 
           SHA-256: ${{ steps.paket.outputs.pruefsumme }}" \
-            || gh release upload "$marke" "${{ steps.paket.outputs.datei }}" --clobber
+            || gh release upload "$marke" \
+                 "${{ steps.paket.outputs.datei }}" auslieferung.toml --clobber
 
       # ── Melden ──────────────────────────────────────────────────────────
       # Der ausroller fragt zusätzlich alle 15 Minuten selbst nach; eine
