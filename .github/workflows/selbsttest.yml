@@ -1,6 +1,0 @@
-name: Selbsttest
-on:
-  workflow_dispatch:
-jobs:
-  a:
-    uses: ./.github/workflows/probe-a.yml
