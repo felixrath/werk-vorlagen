@@ -1,0 +1,190 @@
+# Gemeinsame Bauvorlage für alle Seiten.
+#
+# Ein Seitenrepo ruft sie auf und beschreibt sich selbst in seiner
+# auslieferung.toml. Damit liegt die Logik einmal hier statt zwanzigmal
+# verstreut, und eine Verbesserung erreicht alle Seiten.
+#
+# Sie baut, prüft, stempelt die Fassung ins HTML, legt das Ergebnis als
+# Release-Asset ab und meldet es der Werkstatt. Ausgeliefert wird hier
+# nichts: die Zugangsdaten der Kundenwebspaces liegen auf der Werkstatt,
+# nicht auf GitHub.
+
+name: Bauen und melden
+
+on:
+  workflow_call:
+    inputs:
+      knoten:
+        description: Node-Fassung, falls gebaut wird
+        type: string
+        default: "22"
+    secrets:
+      MELDEN_URL:
+        description: Adresse des ausrollers auf der Werkstatt
+        required: false
+      MELDEN_GEHEIMNIS:
+        description: gemeinsames Geheimnis für die HMAC-Signatur
+        required: false
+
+permissions:
+  contents: write          # für das Release
+
+jobs:
+  bauen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Die Seite beschreibt sich selbst ────────────────────────────────
+      - name: auslieferung.toml lesen
+        id: beschreibung
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import os, sys, tomllib, pathlib
+
+          pfad = pathlib.Path("auslieferung.toml")
+          if not pfad.exists():
+              sys.exit("auslieferung.toml fehlt — siehe werk-vorlagen/README.md")
+          k = tomllib.loads(pfad.read_text())
+
+          fehlend = [f for f in ("name", "art") if f not in k]
+          if fehlend:
+              sys.exit(f"auslieferung.toml: {', '.join(fehlend)} fehlt")
+
+          erlaubt = {"rsync", "sftp", "ftp", "dienst"}
+          if k["art"] not in erlaubt:
+              sys.exit(f"art={k['art']!r} unbekannt, erlaubt: {sorted(erlaubt)}")
+
+          print(f"name={k['name']}")
+          print(f"art={k['art']}")
+          print(f"bauen={k.get('bauen', '')}")
+          print(f"ergebnis={k.get('ergebnis', '.')}")
+          PY
+
+      # ── Bauen, sofern es etwas zu bauen gibt ────────────────────────────
+      - uses: actions/setup-node@v4
+        if: steps.beschreibung.outputs.bauen != ''
+        with:
+          node-version: ${{ inputs.knoten }}
+          cache: npm
+
+      - name: Abhängigkeiten
+        if: steps.beschreibung.outputs.bauen != ''
+        run: npm ci
+
+      # Läuft vor dem Bau: bricht bei fehlerhafter Zeitlogik ab, bevor
+      # irgendetwas ausgeliefert wird. Fehlt ein test-Skript, wird
+      # übersprungen statt zu scheitern.
+      - name: Prüfungen
+        if: steps.beschreibung.outputs.bauen != ''
+        run: |
+          if node -e "process.exit(require('./package.json').scripts?.test?0:1)"; then
+            npm test
+          else
+            echo "kein test-Skript — übersprungen"
+          fi
+          if node -e "process.exit(require('./package.json').devDependencies?.astro||require('./package.json').dependencies?.astro?0:1)"; then
+            npx astro check
+          fi
+
+      - name: Bauen
+        if: steps.beschreibung.outputs.bauen != ''
+        run: ${{ steps.beschreibung.outputs.bauen }}
+
+      # ── Fassung stempeln ────────────────────────────────────────────────
+      # Der Stempel ist der einzige verlässliche Beleg dafür, dass beim
+      # Kunden auch wirklich das Neue steht — auf FTP-Zielen gibt es sonst
+      # keinen. Er dient später auch der Wache: weicht die Fassung auf einer
+      # Kundenseite von der zuletzt ausgelieferten ab, hat jemand von Hand
+      # etwas geändert.
+      - name: Fassung ins HTML stempeln
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, re
+
+          wurzel = pathlib.Path(os.environ["ERGEBNIS"])
+          marke  = f'<meta name="fassung" content="{os.environ["GITHUB_SHA"][:7]}">'
+          kopf   = re.compile(r"<head[^>]*>", re.I)
+
+          gestempelt = 0
+          for datei in wurzel.rglob("*.html"):
+              text = datei.read_text(encoding="utf-8")
+              if 'name="fassung"' in text:
+                  continue
+              neu, anzahl = kopf.subn(lambda m: m.group(0) + "\n  " + marke, text, count=1)
+              if anzahl:
+                  datei.write_text(neu, encoding="utf-8")
+                  gestempelt += 1
+
+          print(f"{gestempelt} Datei(en) gestempelt")
+          PY
+        env:
+          ERGEBNIS: ${{ steps.beschreibung.outputs.ergebnis }}
+
+      # ── Einpacken ───────────────────────────────────────────────────────
+      - name: Paket schnüren
+        id: paket
+        run: |
+          ergebnis="${{ steps.beschreibung.outputs.ergebnis }}"
+          if [ -z "$(ls -A "$ergebnis" 2>/dev/null)" ]; then
+            echo "::error::$ergebnis ist leer — es gibt nichts auszuliefern"; exit 1
+          fi
+          # Das Paket entsteht ausserhalb des Ergebnisverzeichnisses. Bei
+          # Seiten ohne Bau ist ergebnis="." — ein Paket, das dort entstuende,
+          # packte sich selbst halbfertig mit ein.
+          datei="$RUNNER_TEMP/${{ steps.beschreibung.outputs.name }}-${GITHUB_SHA::7}.tar.gz"
+
+          # Bei Seiten ohne Bau ist die Quelle das Repo. Dann muss alles
+          # heraus, was zum Repo gehoert, aber nicht zur Seite. Bei gebauten
+          # Seiten steht in dist/ ohnehin nur das Ergebnis; die Liste schadet
+          # dort nicht.
+          tar czf "$datei" -C "$ergebnis" \
+              --exclude=.git --exclude=.github --exclude=.gitignore \
+              --exclude=.claude --exclude=.vscode --exclude=.werkzeug \
+              --exclude=.DS_Store --exclude=node_modules --exclude=.astro \
+              --exclude=auslieferung.toml --exclude=CLAUDE.md \
+              --exclude='*.tar.gz' \
+              .
+
+          echo "datei=$datei" >> "$GITHUB_OUTPUT"
+          echo "pruefsumme=$(shasum -a 256 "$datei" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "Inhalt:"; tar tzf "$datei" | head -20
+          ls -lh "$datei"
+
+      # ── Ablegen ─────────────────────────────────────────────────────────
+      # Release statt Artefakt: Artefakte verfallen nach 90 Tagen, und ein
+      # Rückzug auf eine ältere Fassung griffe dann ins Leere.
+      - name: Release anlegen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          marke="f-${GITHUB_SHA::7}"
+          gh release create "$marke" "${{ steps.paket.outputs.datei }}" \
+            --title "$marke" \
+            --notes "Fassung ${GITHUB_SHA::7} von $(git log -1 --format=%cI)
+
+          SHA-256: ${{ steps.paket.outputs.pruefsumme }}" \
+            || gh release upload "$marke" "${{ steps.paket.outputs.datei }}" --clobber
+
+      # ── Melden ──────────────────────────────────────────────────────────
+      # Der ausroller fragt zusätzlich alle 15 Minuten selbst nach; eine
+      # verlorene Meldung verschluckt also keine Auslieferung. Deshalb darf
+      # dieser Schritt scheitern, ohne den Lauf rot zu färben.
+      # `if` kennt den secrets-Kontext nicht — deshalb der Umweg ueber env.
+      - name: Der Werkstatt Bescheid geben
+        if: env.MELDEN_URL != ''
+        continue-on-error: true
+        env:
+          MELDEN_URL: ${{ secrets.MELDEN_URL }}
+          MELDEN_GEHEIMNIS: ${{ secrets.MELDEN_GEHEIMNIS }}
+        run: |
+          rumpf=$(printf '{"seite":"%s","fassung":"%s","pruefsumme":"%s","repo":"%s"}' \
+            "${{ steps.beschreibung.outputs.name }}" "${GITHUB_SHA::7}" \
+            "${{ steps.paket.outputs.pruefsumme }}" "$GITHUB_REPOSITORY")
+          signatur=$(printf '%s' "$rumpf" \
+            | openssl dgst -sha256 -hmac "$MELDEN_GEHEIMNIS" -hex \
+            | sed 's/^.* //')
+          curl -sS --fail --max-time 20 -X POST "$MELDEN_URL" \
+            -H "Content-Type: application/json" \
+            -H "X-Werk-Signatur: sha256=$signatur" \
+            -d "$rumpf"
