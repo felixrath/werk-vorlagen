@@ -91,6 +91,22 @@ jobs:
           print("zusatz=" + " ".join(f"--exclude={x}" for x in zusatz))
           PY
 
+      # ── Die Fassung ─────────────────────────────────────────────────────
+      # Bis 7.9.2026 war die Fassung schlicht der Commit-Hash. Damit war das
+      # naechtliche Nachbacken wirkungslos: gleicher Commit, gleicher Tag,
+      # gleicher Stempel — der ausroller verglich, sah dasselbe und holte
+      # nichts. Ein Urlaub, der heute beginnt, stand deshalb nie im
+      # ausgelieferten HTML; nur das Skript im Browser rechnete richtig.
+      #
+      # Mit dem Backdatum unterscheiden sich zwei Baeue desselben Commits.
+      # Der Hash bleibt vorn, damit man weiter sieht, WAS ausgeliefert ist —
+      # das Datum sagt nur, WANN es gebacken wurde.
+      - name: Fassung bestimmen
+        id: fassung
+        run: |
+          echo "fassung=${GITHUB_SHA::7}-$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "Fassung: ${GITHUB_SHA::7}-$(date -u +%Y%m%d)"
+
       # ── Nachbacken: aendert sich heute ueberhaupt etwas? ─────────────────
       # Die Frage beantwortet die aushang-Bibliothek selbst — dieselbe
       # Logik, die auch die Seite rechnet. Sie in einem Cron-Skript
@@ -180,7 +196,7 @@ jobs:
           import os, pathlib, re
 
           wurzel = pathlib.Path(os.environ["ERGEBNIS"])
-          marke  = f'<meta name="fassung" content="{os.environ["GITHUB_SHA"][:7]}">'
+          marke  = f'<meta name="fassung" content="{os.environ["FASSUNG"]}">'
           kopf   = re.compile(r"<head[^>]*>", re.I)
 
           gestempelt = 0
@@ -197,6 +213,7 @@ jobs:
           PY
         env:
           ERGEBNIS: ${{ steps.beschreibung.outputs.ergebnis }}
+          FASSUNG: ${{ steps.fassung.outputs.fassung }}
 
       # ── Einpacken ───────────────────────────────────────────────────────
       - name: Paket schnüren
@@ -210,7 +227,7 @@ jobs:
           # Das Paket entsteht ausserhalb des Ergebnisverzeichnisses. Bei
           # Seiten ohne Bau ist ergebnis="." — ein Paket, das dort entstuende,
           # packte sich selbst halbfertig mit ein.
-          datei="$RUNNER_TEMP/${{ steps.beschreibung.outputs.name }}-${GITHUB_SHA::7}.tar.gz"
+          datei="$RUNNER_TEMP/${{ steps.beschreibung.outputs.name }}-${{ steps.fassung.outputs.fassung }}.tar.gz"
 
           # Bei Seiten ohne Bau ist die Quelle das Repo. Dann muss alles
           # heraus, was zum Repo gehoert, aber nicht zur Seite. Bei gebauten
@@ -238,18 +255,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          marke="f-${GITHUB_SHA::7}"
+          marke="f-${{ steps.fassung.outputs.fassung }}"
+          # wechsel.json haengt nur an, wenn die Seite einen Aushang hat.
+          zusatz=""
+          if [ -f wechsel.json ]; then zusatz="wechsel.json"; fi
           # auslieferung.toml haengt als eigenes Anhaengsel am Release und
           # liegt bewusst nicht im Paket: der ausroller braucht sie, das
           # Webwurzelverzeichnis nicht.
           gh release create "$marke" \
-            "${{ steps.paket.outputs.datei }}" auslieferung.toml \
+            "${{ steps.paket.outputs.datei }}" auslieferung.toml $zusatz \
             --title "$marke" \
-            --notes "Fassung ${GITHUB_SHA::7} von $(git log -1 --format=%cI)
+            --notes "Fassung ${{ steps.fassung.outputs.fassung }} (Commit ${GITHUB_SHA::7}) von $(git log -1 --format=%cI)
 
           SHA-256: ${{ steps.paket.outputs.pruefsumme }}" \
             || gh release upload "$marke" \
-                 "${{ steps.paket.outputs.datei }}" auslieferung.toml --clobber
+                 "${{ steps.paket.outputs.datei }}" auslieferung.toml $zusatz --clobber
 
       # ── Melden ──────────────────────────────────────────────────────────
       # Der ausroller fragt zusätzlich alle 15 Minuten selbst nach; eine
@@ -264,7 +284,7 @@ jobs:
           MELDEN_GEHEIMNIS: ${{ secrets.MELDEN_GEHEIMNIS }}
         run: |
           rumpf=$(printf '{"seite":"%s","fassung":"%s","pruefsumme":"%s","repo":"%s"}' \
-            "${{ steps.beschreibung.outputs.name }}" "${GITHUB_SHA::7}" \
+            "${{ steps.beschreibung.outputs.name }}" "${{ steps.fassung.outputs.fassung }}" \
             "${{ steps.paket.outputs.pruefsumme }}" "$GITHUB_REPOSITORY")
           signatur=$(printf '%s' "$rumpf" \
             | openssl dgst -sha256 -hmac "$MELDEN_GEHEIMNIS" -hex \
