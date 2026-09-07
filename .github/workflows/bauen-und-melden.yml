@@ -215,6 +215,46 @@ jobs:
           ERGEBNIS: ${{ steps.beschreibung.outputs.ergebnis }}
           FASSUNG: ${{ steps.fassung.outputs.fassung }}
 
+      # ── Wann wechselt der Aushang das naechste Mal? ─────────────────────
+      # Damit die Werkstatt merken kann, wenn das Nachbacken ausbleibt.
+      #
+      # Gerechnet wird hier, nicht drueben: Die Zeitlogik (Rhythmus,
+      # Feiertage, Urlaube, Sommerzeit) steht in der aushang-Bibliothek.
+      # Sie in Python nachzubauen hiesse, sie zweimal zu haben — und die
+      # zweite Fassung waere die, die still falsch wird. Die Werkstatt
+      # vergleicht nur noch Datumsangaben.
+      - name: Wechseltermine notieren
+        if: ${{ !inputs.nur_bei_aenderung || steps.wechsel.outputs.noetig == 'ja' }}
+        continue-on-error: true
+        run: |
+          if [ ! -f aushang.toml ] || [ ! -d src/aushang ]; then
+            echo "kein Aushang — keine Wechseltermine"; exit 0
+          fi
+          [ -d node_modules ] && echo "Pakete liegen" || npm ci --silent
+          cat > ./wechseltermine.probe.ts <<'TS'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          import { parse } from 'smol-toml';
+          import { AushangSchema } from './src/aushang/src/schema.ts';
+          import { wechseltAm, ortsZeit, datumPlus } from './src/aushang/src/aushang.ts';
+
+          const a = AushangSchema.parse(parse(readFileSync('aushang.toml', 'utf8')));
+          const heute = ortsZeit(new Date(), a.zeitzone).datum;
+          const termine: string[] = [];
+          let d = heute;
+          // Ein halbes Jahr voraus reicht: Weiter plant kaum eine Ordination,
+          // und die Datei entsteht bei jedem Bau neu.
+          for (let i = 0; i < 180; i++) {
+            if (wechseltAm(a, d)) termine.push(d);
+            d = datumPlus(d, 1).datum;
+          }
+          writeFileSync('wechsel.json', JSON.stringify(
+            { erzeugt: heute, zeitzone: a.zeitzone, wechselt_an: termine }, null, 1) + '\n');
+          console.log(`${termine.length} Wechseltermin(e), naechster: ${termine[0] ?? '—'}`);
+          TS
+          npx tsx ./wechseltermine.probe.ts
+          rm -f ./wechseltermine.probe.ts
+          cat wechsel.json
+
       # ── Einpacken ───────────────────────────────────────────────────────
       - name: Paket schnüren
         if: ${{ !inputs.nur_bei_aenderung || steps.wechsel.outputs.noetig == 'ja' }}
