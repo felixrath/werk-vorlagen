@@ -302,14 +302,26 @@ jobs:
           # auslieferung.toml haengt als eigenes Anhaengsel am Release und
           # liegt bewusst nicht im Paket: der ausroller braucht sie, das
           # Webwurzelverzeichnis nicht.
-          gh release create "$marke" \
-            "${{ steps.paket.outputs.datei }}" auslieferung.toml $zusatz \
-            --title "$marke" \
-            --notes "Fassung ${{ steps.fassung.outputs.fassung }} (Commit ${GITHUB_SHA::7}) von $(git log -1 --format=%cI)
-
-          SHA-256: ${{ steps.paket.outputs.pruefsumme }}" \
-            || gh release upload "$marke" \
-                 "${{ steps.paket.outputs.datei }}" auslieferung.toml $zusatz --clobber
+          # Die Notiz steht in einer Variablen, weil sie zweimal gebraucht wird.
+          notiz="Fassung ${{ steps.fassung.outputs.fassung }} (Commit ${GITHUB_SHA::7}) von $(git log -1 --format=%cI)
+          
+          SHA-256: ${{ steps.paket.outputs.pruefsumme }}"
+          
+          # Zwei Baeue desselben Commits am selben Tag ergeben denselben Tag.
+          # Dann scheitert `create`, `upload --clobber` ersetzt das Paket — die
+          # NOTIZ blieb dabei stehen. Der ausroller prueft die Pruefsumme aus der
+          # Notiz gegen das Paket und lehnte danach jede Fassung ab:
+          #
+          #     amhf: Pruefsumme stimmt nicht
+          #
+          # Deshalb wird die Notiz beim Nachlegen ausdruecklich mitgezogen.
+          if ! gh release create "$marke" \
+                 "${{ steps.paket.outputs.datei }}" auslieferung.toml $zusatz \
+                 --title "$marke" --notes "$notiz"; then
+            gh release upload "$marke" \
+              "${{ steps.paket.outputs.datei }}" auslieferung.toml $zusatz --clobber
+            gh release edit "$marke" --notes "$notiz"
+          fi
 
       # ── Melden ──────────────────────────────────────────────────────────
       # Der ausroller fragt zusätzlich alle 15 Minuten selbst nach; eine
