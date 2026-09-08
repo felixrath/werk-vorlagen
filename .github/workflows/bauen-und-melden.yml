@@ -235,7 +235,8 @@ jobs:
           import { readFileSync, writeFileSync } from 'node:fs';
           import { parse } from 'smol-toml';
           import { AushangSchema } from './src/aushang/src/schema.ts';
-          import { wechseltAm, ortsZeit, datumPlus } from './src/aushang/src/aushang.ts';
+          import { wechseltAm, ortsZeit, datumPlus, tagesLage, wochenplan }
+            from './src/aushang/src/aushang.ts';
 
           const a = AushangSchema.parse(parse(readFileSync('aushang.toml', 'utf8')));
           const heute = ortsZeit(new Date(), a.zeitzone).datum;
@@ -250,6 +251,57 @@ jobs:
           writeFileSync('wechsel.json', JSON.stringify(
             { erzeugt: heute, zeitzone: a.zeitzone, wechselt_an: termine }, null, 1) + '\n');
           console.log(`${termine.length} Wechseltermin(e), naechster: ${termine[0] ?? '—'}`);
+
+          // Und derselbe Aushang, ausgerechnet: fuer das Kundenportal.
+          //
+          // Es zeigt der Ordination ihre eigenen Zeiten und spaeter einen
+          // Kalender. Damit es dafuer nicht `tagesLage` in Python nachbauen
+          // muss — Rhythmus, Feiertage, `betrifft`, Sommerzeit —, kommt es
+          // fertig gerechnet von hier. Dieselbe Ueberlegung wie bei
+          // wechsel.json, nur ausfuehrlicher: Das Portal zeigt, es urteilt
+          // nicht.
+          //
+          // 120 Tage, weil ein Kalender vier Monate blaettern koennen soll
+          // und die Datei bei jedem Bau neu entsteht. Ein Urlaub im
+          // uebernaechsten Jahr steht trotzdem drin: `abweichungen` ist
+          // ungekuerzt.
+          const tage: unknown[] = [];
+          for (let i = 0; i < 120; i++) {
+            const o = datumPlus(heute, i);
+            const lage = tagesLage(a, o.datum, o.wochentag);
+            tage.push({
+              datum: o.datum,
+              wochentag: o.wochentag,
+              lagen: lage.lagen.map((l) => ({
+                sprechstunde: l.sprechstunde.name,
+                standort: l.sprechstunde.standort ?? null,
+                zeiten: l.zeiten,
+                grund: l.grund ?? null,
+              })),
+            });
+          }
+
+          writeFileSync('aushang-stand.json', JSON.stringify({
+            erzeugt: heute,
+            zeitzone: a.zeitzone,
+            anmerkung: a.anmerkung,
+            telefonzeiten: a.telefonzeiten ?? null,
+            standort: a.standort,
+            sprechstunde: a.sprechstunde.map((s) => ({
+              name: s.name,
+              standort: s.standort ?? null,
+              hauptsprechstunde: s.hauptsprechstunde,
+              woche: Object.fromEntries(wochenplan(s).map((w) => [w.tag, w.zeiten])),
+            })),
+            // Ungekuerzt und unsortiert wie in der Datei: Was die
+            // Ordination eingetragen hat, soll sie unveraendert
+            // wiederfinden.
+            abweichung: a.abweichung,
+            hinweis: a.hinweis,
+            tage,
+          }, null, 1) + '\n');
+          console.log(`aushang-stand.json: ${tage.length} Tage, ` +
+                      `${a.abweichung.length} Abweichung(en), ${a.hinweis.length} Hinweis(e)`);
           TS
           npx tsx ./wechseltermine.probe.ts
           rm -f ./wechseltermine.probe.ts
@@ -296,9 +348,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           marke="f-${{ steps.fassung.outputs.fassung }}"
-          # wechsel.json haengt nur an, wenn die Seite einen Aushang hat.
+          # Beide haengen nur an, wenn die Seite einen Aushang hat.
           zusatz=""
           if [ -f wechsel.json ]; then zusatz="wechsel.json"; fi
+          if [ -f aushang-stand.json ]; then zusatz="$zusatz aushang-stand.json"; fi
           # auslieferung.toml haengt als eigenes Anhaengsel am Release und
           # liegt bewusst nicht im Paket: der ausroller braucht sie, das
           # Webwurzelverzeichnis nicht.
