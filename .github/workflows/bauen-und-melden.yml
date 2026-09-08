@@ -324,6 +324,12 @@ jobs:
             anmerkung: a.anmerkung,
             telefonzeiten: a.telefonzeiten ?? null,
             standort: a.standort,
+            // Stammdaten unveraendert mit: Das Portal zeigt sie, und die
+            // Ordination soll dort dasselbe lesen wie auf ihrer Seite.
+            // Ungerechnet — hier gibt es nichts auszurechnen.
+            person: a.person,
+            leistung: a.leistung,
+            kassen: a.kassen ?? null,
             sprechstunde: a.sprechstunde.map((s) => ({
               name: s.name,
               standort: s.standort ?? null,
@@ -338,7 +344,9 @@ jobs:
             tage,
             sondertage,
           }, null, 1) + '\n');
-          console.log(`aushang-stand.json: ${tage.length} Tage, ` +
+          console.log(`aushang-stand.json: ${a.person.length} Person(en), ` +
+                      `${a.leistung.length} Leistung(en), ` +
+                      `${tage.length} Tage, ` +
                       `${sondertage.length} Sondertag(e) in 400, ` +
                       `${a.abweichung.length} Abweichung(en), ${a.hinweis.length} Hinweis(e)`);
           TS
