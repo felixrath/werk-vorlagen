@@ -281,6 +281,43 @@ jobs:
             });
           }
 
+          // Und dasselbe weiter voraus, aber nur das Abweichende: fuer
+          // Verzeichnisse wie Google. Die schliessen ein Unternehmen an
+          // Feiertagen NICHT von selbst — wer nichts eintraegt, steht am
+          // 26. Oktober als geoeffnet da. Ein Jahr im Voraus ist genau das,
+          // was dort hingehoert, und was praktisch keine Ordination von
+          // Hand pflegt.
+          //
+          // 400 Tage statt 365: Google zeigt Sonderzeiten etwa ein Jahr
+          // weit; der Ueberhang deckt den Rand ab, an dem ein Urlaub sonst
+          // abgeschnitten stuende.
+          //
+          // Nur die Abweichungen, nicht alle Tage. 400 vollstaendige Tage
+          // waeren zehnmal die Datei fuer eine Auskunft, die zu 97 Prozent
+          // »wie immer« lautet.
+          const regel = Object.fromEntries(
+            a.sprechstunde.map((s) => [s.name,
+              Object.fromEntries(wochenplan(s).map((w) => [w.tag, w.zeiten]))]));
+          const sondertage: unknown[] = [];
+          for (let i = 0; i < 400; i++) {
+            const o = datumPlus(heute, i);
+            const lage = tagesLage(a, o.datum, o.wochentag);
+            const abweichend = lage.lagen.some((l) =>
+              JSON.stringify(l.zeiten) !==
+              JSON.stringify((regel[l.sprechstunde.name] ?? {})[o.wochentag] ?? []));
+            if (!abweichend) continue;
+            sondertage.push({
+              datum: o.datum,
+              wochentag: o.wochentag,
+              lagen: lage.lagen.map((l) => ({
+                sprechstunde: l.sprechstunde.name,
+                standort: l.sprechstunde.standort ?? null,
+                zeiten: l.zeiten,
+                grund: l.grund ?? null,
+              })),
+            });
+          }
+
           writeFileSync('aushang-stand.json', JSON.stringify({
             erzeugt: heute,
             zeitzone: a.zeitzone,
@@ -299,8 +336,10 @@ jobs:
             abweichung: a.abweichung,
             hinweis: a.hinweis,
             tage,
+            sondertage,
           }, null, 1) + '\n');
           console.log(`aushang-stand.json: ${tage.length} Tage, ` +
+                      `${sondertage.length} Sondertag(e) in 400, ` +
                       `${a.abweichung.length} Abweichung(en), ${a.hinweis.length} Hinweis(e)`);
           TS
           npx tsx ./wechseltermine.probe.ts
